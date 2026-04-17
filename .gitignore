@@ -1,0 +1,25 @@
+# data files, never commit these
+*.csv
+*.parquet
+*.feather
+*.pkl
+*.h5
+data/
+raw/
+processed/
+outputs/
+
+# local environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Claude local config
+.claude/
+
+# system
+.DS_Store
+Thumbs.db
