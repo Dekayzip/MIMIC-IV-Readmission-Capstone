@@ -3,7 +3,7 @@
 Capstone project predicting 30-day hospital readmission risk using the MIMIC-IV clinical database (PhysioNet credentialed access required). Includes EDA, SQL-based cohort extraction, feature engineering, and machine learning classification pipeline.
 
 ## Team
-- Dharani Kolukuluri
+- Dharani Kommideddi
 - Alekhya Konakanchi (AlekhyaaKonakanchi)
 
 ## Tools
