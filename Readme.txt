@@ -1,6 +1,6 @@
 ================================================================================
 CLAUDE CONTEXT FILE — MIMIC-IV CAPSTONE PROJECT
-Last Updated: 2026-04-13
+Last Updated: 2026-04-27 (evening update)
 ================================================================================
 
 PURPOSE OF THIS FILE
@@ -39,8 +39,17 @@ The 5-phase plan:
   Phase 4: Build & evaluate ML models (Logistic Regression → Random Forest → XGBoost)
   Phase 5: Streamlit interactive dashboard
 
-Current status: EDA notebook (eda.ipynb) is being built and debugged.
-Phases 1-5 have NOT been started yet. EDA comes first.
+Current status:
+  - EDA notebook (eda.ipynb): COMPLETE (BigQuery EDA on full 364k patient dataset)
+  - Pipeline switched from BigQuery to LOCAL DuckDB (CSV files in data/)
+  - Phase 1 (Cohort): COMPLETE — cohort.ipynb built cohort, target variable built
+    outputs/cohort_10k.csv (9,996 patients: subject_id, age_group, gender)
+  - Phase 2 (Feature engineering): COMPLETE — final_dataset.parquet produced
+    23,896 rows x 719 columns (14 clinical features + 705 CCSR binary flags)
+    Saved to: outputs/final_dataset.parquet and outputs/final_dataset.csv
+  - Phase 3 (EDA on final dataset): COMPLETE — eda_final_dataset.ipynb (10 sections)
+    All charts saved to outputs/eda_plots/
+  - Phases 4-5: NOT started (modeling and dashboard)
 
 ================================================================================
 SECTION 3: ENVIRONMENT SETUP (ALREADY DONE — DO NOT REDO)
@@ -59,17 +68,15 @@ SECTION 3: ENVIRONMENT SETUP (ALREADY DONE — DO NOT REDO)
 - physionet-data starred in BigQuery console
 
 Packages installed (in Anaconda environment):
-  - google-cloud-bigquery (installed via pip inside Jupyter cell using sys.executable)
-  - db-dtypes
-  - pyarrow
-  - pandas (already present)
-  - matplotlib (already present)
-  - seaborn (already present)
+  - google-cloud-bigquery, db-dtypes (BigQuery — no longer used)
+  - pyarrow (still used for parquet output)
+  - duckdb (local SQL engine — all queries now run via duckdb.connect())
+  - pandas, matplotlib, seaborn (already present)
+  - requests (for AHRQ file downloads)
 
-IMPORTANT: When Jupyter throws ModuleNotFoundError for google.cloud, run this
-in a notebook cell to install into the correct environment:
-  import sys
-  !{sys.executable} -m pip install google-cloud-bigquery db-dtypes pyarrow
+NOTE: Pipeline migrated off BigQuery. All data now lives in:
+  data/admissions.csv, data/patients.csv, data/diagnoses_icd.csv
+  CCSR mappings: ccsr/icd10_ccsr/ (DXCCSR_v2025-1) and ccsr/icd9_ccs/ (CCS 2015)
 
 ================================================================================
 SECTION 4: DATABASE STRUCTURE
@@ -96,6 +103,7 @@ Key tables and sizes:
 ================================================================================
 SECTION 5: KEY FINDINGS FROM EDA SO FAR
 ================================================================================
+FROM eda.ipynb (full MIMIC-IV BigQuery EDA):
 - Total unique patients:  364,627
 - Total admissions:       546,028
 - Avg admissions/patient: 1.50
@@ -105,17 +113,67 @@ SECTION 5: KEY FINDINGS FROM EDA SO FAR
 - Most common insurance: Medicare
 - Length of stay: heavily right-skewed, most stays are short (1-3 days)
 - In-hospital mortality: ~5-6% of admissions
-- 30-day readmission rate: ~12-15% (final number pending Section 8 completion)
+
+FROM eda_final_dataset.ipynb (final modeling dataset, 23,896 rows):
+- Dataset shape: 23,896 rows x 719 columns
+- Column layout: cols 0-1 are IDs, cols 2-13 are clinical features,
+  cols 14-718 are CCSR binary diagnosis flags (705 total)
+- Target: readmitted_30d — exact rate produced by running Section 3
+- CCSR column names have embedded single quotes and spaces
+  e.g. "'1    '" instead of "1" — MUST be cleaned before modeling
+- discharge_location contains DIED rows — must be excluded or
+  handled as a separate class before binary classification
+- race has many unique values — consolidation needed before encoding
+- hospital_expire_flag lives in data/admissions.csv (not in df by default)
+  Section 10 joins it on hadm_id to build three-class outcome
+- Three outcome classes (from Section 10):
+    Class 0: Not Readmitted (discharged alive, no readmission within 30d)
+    Class 1: Readmitted within 30 days
+    Class 2: Died in hospital
+- Top CCSR conditions vary by outcome class (chart: three_class_top_conditions.png)
 
 ================================================================================
 SECTION 6: FILES IN THE PROJECT
 ================================================================================
 Location: C:\Users\dhara\OneDrive\Desktop\Project 1\
 
-  main.py               — original connection test + quick EDA script (working)
-  eda.ipynb             — full EDA Jupyter notebook (IN PROGRESS)
-  demographics_overview.png — saved chart from main.py run
-  Claude_Readme.txt     — THIS FILE
+  main.py                           — original connection test + quick EDA script
+  eda.ipynb                         — BigQuery EDA on full MIMIC-IV dataset (COMPLETE)
+  cohort.ipynb                      — Phase 1 cohort + target variable (COMPLETE)
+  ccsr_features.ipynb               — Phase 2 CCSR feature engineering (COMPLETE)
+  eda_final_dataset.ipynb           — Phase 3 EDA on final modeling dataset (COMPLETE)
+  demographics_overview.png         — chart from main.py
+  Readme.txt                        — THIS FILE
+  data/                             — admissions.csv, patients.csv, diagnoses_icd.csv
+  outputs/cohort_10k.csv            — 9,996 patients (subject_id, age_group, gender)
+  outputs/ccsr_features.parquet     — CCSR binary feature matrix (intermediate)
+  outputs/ccsr_features_preview.csv — preview of CCSR features
+  outputs/final_dataset.parquet     — FINAL modeling dataset (23,896 x 719) USE THIS
+  outputs/final_dataset.csv         — same as above in CSV format
+  outputs/eda_plots/                — all EDA charts (15+ PNG files)
+    missing_values.png, target_distribution.png
+    age_at_admission_dist.png, los_days_dist.png, prior_admissions_count_dist.png
+    gender_counts.png, admission_type_counts.png, insurance_counts.png
+    race_counts.png, discharge_location_counts.png, marital_status_counts.png
+    gender_readmission_rate.png, admission_type_readmission_rate.png, ...
+    ccsr_top20_prevalence.png, numeric_correlations.png
+    three_class_top_conditions.png
+  ccsr/icd10_ccsr/                  — extracted DXCCSR_v2025-1 mapping files
+  ccsr/icd9_ccs/                    — extracted CCS 2015 ICD-9 mapping files
+
+eda_final_dataset.ipynb structure (23 cells):
+  Section 1:  Setup and Load — imports, loads final_dataset.parquet as df
+  Section 2:  Missing Value Analysis — table + missing_values.png
+  Section 3:  Target Variable Distribution — target_distribution.png
+  Section 4:  Clinical Feature Distributions — histograms split by readmission
+  Section 5:  Categorical Feature Analysis — value counts + bar charts
+  Section 6:  Readmission Rate by Category — rate per group + charts
+  Section 7:  CCSR Feature Summary — top 20/bottom 10 prevalence, ccsr_top20_prevalence.png
+  Section 8:  Class Imbalance and Correlation Check — numeric_correlations.png
+  Section 9:  EDA Summary Report — computed summary block with all key numbers
+  Section 10: Three-Class Outcome Analysis — joins hospital_expire_flag from
+              data/admissions.csv, builds outcome_class (0/1/2), top conditions
+              per class, three_class_top_conditions.png
 
 eda.ipynb structure:
   Cell 1  (pip install)    — installs google-cloud-bigquery into Jupyter kernel
@@ -167,38 +225,71 @@ PATTERN TO REMEMBER:
 - NotebookEdit tool does NOT reliably update open notebooks in VS Code —
   tell user to manually edit cells, or close/reopen notebook
 
+KNOWN ISSUES IN final_dataset.parquet (must fix in preprocessing before modeling):
+1. CCSR column names have embedded single quotes and spaces
+   e.g. "'1    '" — strip quotes and spaces before encoding
+2. discharge_location = 'DIED' rows exist — exclude before binary classification
+   or keep only for three-class model
+3. race column has many unique values — consolidate rare categories
+4. hospital_expire_flag is NOT in final_dataset.parquet —
+   must join from data/admissions.csv on hadm_id when needed
+
 ================================================================================
 SECTION 8: NEXT STEPS (IN ORDER)
 ================================================================================
-1. Finish running all cells in eda.ipynb — confirm Section 8 (readmission preview)
-   produces the 30-day readmission rate number
+Phases 1, 2, 3 are COMPLETE. Starting from Phase 4.
 
-2. Begin Phase 1 — Build the cohort table:
-   - Adults only (age >= 18)
-   - Discharged alive (hospital_expire_flag = 0)
-   - Target variable: readmitted_30d (1 if next admission within 30 days, else 0)
-   - SQL uses LEAD() window function over subject_id ordered by admittime
-   - Result: one row per eligible admission with label attached
+1. Preprocessing notebook (new: preprocessing.ipynb):
+   - Load outputs/final_dataset.parquet
+   - Fix CCSR column names: strip embedded single quotes and spaces
+   - Drop or flag rows where discharge_location = 'DIED'
+   - Consolidate rare race categories (e.g. group anything under 1% as 'Other')
+   - Encode categorical columns (gender, admission_type, insurance, race,
+     discharge_location, marital_status) using LabelEncoder or pd.get_dummies
+   - Scale numeric columns (age_at_admission, los_days, prior_admissions_count)
+   - Save cleaned dataset to outputs/final_dataset_clean.parquet
 
-3. Begin Phase 2 — Feature engineering:
-   - Demographics: age, gender, race
-   - Admission features: admission_type, insurance, los_days
-   - Diagnosis features: num_diagnoses, presence of key ICD codes
-   - Prior utilization: number of prior admissions
-   - Lab features: abnormal flag counts for common labs
-
-4. Phase 3 — EDA on cohort (readmission rate by subgroup)
-
-5. Phase 4 — Modeling:
-   - Logistic Regression (baseline)
-   - Random Forest
+2. Phase 4 — Modeling notebook (new: modeling.ipynb):
+   - Load outputs/final_dataset_clean.parquet
+   - Train/test split (80/20, stratified on readmitted_30d)
+   - Baseline: Logistic Regression
+   - Random Forest with feature importance
    - XGBoost
-   - Evaluate with AUC-ROC, precision-recall, feature importance
+   - Evaluate each with: AUC-ROC, precision, recall, F1, confusion matrix
+   - Handle class imbalance with class_weight='balanced' or SMOTE
+   - Save best model to outputs/best_model.pkl
 
-6. Phase 5 — Streamlit dashboard:
-   - Input patient characteristics
-   - Output readmission risk score
-   - Show top contributing features
+3. Phase 5 — Streamlit dashboard (new: app.py or dashboard.py):
+   - Input: patient characteristics (age, gender, admission type, diagnoses)
+   - Output: readmission risk score (probability)
+   - Show top contributing CCSR features for the prediction
+   - Run locally with: streamlit run app.py
+
+================================================================================
+SECTION 9: MODELING RESULTS
+================================================================================
+Date completed: 2026-05-11
+
+Notebook: modeling_v2.ipynb — COMPLETE
+
+Models trained:
+  - Logistic Regression (baseline)
+  - Random Forest
+  - XGBoost (best model)
+
+Best model: XGBoost
+  ROC-AUC: 0.7562
+
+Output files produced:
+  outputs/lr_model.pkl              — trained Logistic Regression model
+  outputs/rf_model.pkl              — trained Random Forest model
+  outputs/xgb_model.pkl             — trained XGBoost model (best)
+  outputs/best_model_info.json      — metadata for best model
+  outputs/roc_curves.png            — ROC curves for all three models
+  outputs/calibration_curves.png    — calibration curves for all three models
+  outputs/fairness_audit.csv        — readmission rate by demographic group
+
+Next step: SHAP explainability and Streamlit dashboard
 
 ================================================================================
 END OF FILE
