@@ -1,0 +1,766 @@
+================================================================================
+CAPSTONE.IPYNB -- FULL CONTEXT FILE
+For: Dharani Kommireddy (dkommire@depaul.edu)
+Program: MS in Data Science, DePaul University
+Generated: 2026-05-24
+Purpose: Research paper reference, Claude memory compaction recovery,
+         session handoff, professor/recruiter explanation guide
+================================================================================
+
+
+================================================================================
+PART 1: WHO IS THIS FILE FOR AND WHY IT EXISTS
+================================================================================
+
+This file is the single source of truth for the capstone.ipynb notebook.
+
+Read this file at the start of every new session before touching any code.
+It tells Claude (and Dharani) exactly:
+  - What the research question is
+  - What data was used and why
+  - What every section of capstone.ipynb does and what it produced
+  - What decisions were made and why
+  - What comes next
+  - What to say when explaining this to a professor or recruiter
+
+The main project context file is Readme.txt in the same folder.
+This file focuses specifically on capstone.ipynb and the research paper angle.
+
+
+================================================================================
+PART 2: THE RESEARCH QUESTION
+================================================================================
+
+Central Question:
+  Can we predict whether a hospital patient will be readmitted within
+  30 days of discharge, using only information available at discharge?
+
+Why this matters:
+  - 30-day readmissions cost the US healthcare system ~$26 billion per year
+  - Medicare penalizes hospitals with high readmission rates under HRRP
+    (Hospital Readmissions Reduction Program)
+  - Early identification of high-risk patients allows targeted interventions:
+    discharge planning, follow-up calls, post-acute care referrals
+  - MIMIC-IV is one of the only publicly available real clinical datasets
+    at this scale -- making this study replicable and publishable
+
+Research framing for paper:
+  "We develop a machine learning pipeline for 30-day all-cause hospital
+  readmission prediction using MIMIC-IV v3.1, a large de-identified EHR
+  dataset from Beth Israel Deaconess Medical Center (2008-2022). We
+  compare Logistic Regression, Random Forest, and XGBoost classifiers
+  and evaluate model fairness across demographic subgroups."
+
+Key design choices that distinguish this from simple tutorials:
+  1. Cohort is built from raw admissions data, not a pre-packaged dataset
+  2. ICD-9 and ICD-10 codes are both mapped to clinical categories (CCSR/CCS)
+  3. Planned readmissions (elective, surgical same-day) are excluded from
+     the positive class -- this is methodologically correct
+  4. Train/test split is by patient (subject_id), not by row -- this
+     prevents data leakage from patients with multiple admissions
+  5. Fairness audit by race, gender, and insurance type is included
+
+
+================================================================================
+PART 3: THE DATASET
+================================================================================
+
+Source: MIMIC-IV v3.1 (Medical Information Mart for Intensive Care)
+        Beth Israel Deaconess Medical Center, Boston MA
+        De-identified -- dates shifted by a random constant per patient
+        Access: PhysioNet (physionet.org), user: dekay2627
+        Original hosting: Google BigQuery (physionet-data project)
+        Current storage: Local CSV files in data/ folder
+
+Raw files used in capstone.ipynb:
+
+  data/admissions.csv
+    546,028 rows, 16 columns
+    One row per hospital admission (a patient can have many rows)
+    Key columns: subject_id, hadm_id, admittime, dischtime, deathtime,
+                 admission_type, discharge_location, insurance, race,
+                 marital_status, edregtime, edouttime, hospital_expire_flag
+    hospital_expire_flag = 1 means the patient died during this admission
+    admittime/dischtime are de-identified (years ~2105 to ~2214)
+
+  data/patients.csv
+    364,627 rows, 6 columns
+    One row per unique patient
+    Key columns: subject_id, gender, anchor_age, anchor_year,
+                 anchor_year_group, dod
+    anchor_age is the patient's age at their anchor_year
+    Age range: 18-91 (MIMIC excludes patients under 18)
+    38,301 patients have a recorded date of death
+
+  data/diagnoses_icd.csv
+    6,364,488 rows, 5 columns
+    One row per ICD diagnosis code per admission
+    Key columns: subject_id, hadm_id, seq_num, icd_code, icd_version
+    icd_version: 9 = ICD-9 (2,908,741 codes), 10 = ICD-10 (3,455,747 codes)
+    Average 11.7 diagnosis codes per admission
+    MIMIC switched from ICD-9 to ICD-10 around 2015 (de-identified ~2130)
+
+Important data facts for the paper:
+  - Dates are shifted per-patient by a random constant -- year comparisons
+    within a patient are valid, cross-patient year comparisons are not
+  - Race categories are MIMIC's original values -- 33 unique categories
+    which we consolidate to 6 groups for modeling
+  - Some patients appear in both ICD-9 and ICD-10 eras if they were
+    admitted both before and after the coding switch
+
+
+================================================================================
+PART 4: CAPSTONE.IPYNB SECTION-BY-SECTION WALKTHROUGH
+================================================================================
+
+The notebook lives at:
+  C:\Users\dhara\OneDrive\Desktop\Project 1\capstone.ipynb
+Total cells: 29 (as of 2026-05-24)
+Status: Sections 0, 1, 2, 3 complete. Section 4+ not yet built.
+
+----------------------------------------------------------------
+SECTION 0: Setup and Configuration (cells 00-01)
+----------------------------------------------------------------
+
+What it does:
+  Imports all libraries, sets display options, defines all file paths
+  using pathlib.Path, and prints confirmation that all paths exist.
+
+Libraries imported:
+  duckdb, pandas, numpy, matplotlib, seaborn, pathlib.Path, warnings
+
+Key settings:
+  sns.set_style('whitegrid')
+  plt.rcParams['figure.dpi'] = 120
+  pd.set_option('display.max_columns', 50)
+  SEED = 42
+
+Path variables defined (all using pathlib):
+  PROJECT_ROOT   = Path('C:/Users/dhara/OneDrive/Desktop/Project 1')
+  DATA_DIR       = PROJECT_ROOT / 'data'
+  CCSR_DIR       = PROJECT_ROOT / 'ccsr'
+  OUTPUTS_DIR    = PROJECT_ROOT / 'outputs'
+  ADMISSIONS_PATH  = DATA_DIR / 'admissions.csv'
+  PATIENTS_PATH    = DATA_DIR / 'patients.csv'
+  DIAGNOSES_PATH   = DATA_DIR / 'diagnoses_icd.csv'
+
+Output when run:
+  All 7 paths print EXISTS. No errors.
+
+Why SEED = 42:
+  Used in train_test_split (Section 2C) for reproducibility.
+  Must be passed as random_state=SEED wherever randomness is introduced.
+
+Note: DuckDB is imported but not used yet in Section 0. It is available
+for SQL-style queries in later sections if needed.
+
+----------------------------------------------------------------
+SECTION 1: Raw Data Exploration (cells 02-11)
+----------------------------------------------------------------
+
+Purpose: Observe the raw data. No transformations. No writes to disk.
+This is the "get to know your data" phase for the paper's Data section.
+
+1A -- admissions.csv (cell 04)
+  Loaded WITHOUT parse_dates (raw strings) for pure observation.
+  Key findings:
+    Shape: 546,028 x 16
+    Null columns: deathtime (534,238), discharge_location (149,818),
+                  edregtime/edouttime (166,788 each), insurance (9,355),
+                  marital_status (13,619), admit_provider_id (4)
+    Unique patients: 223,452
+    Unique admissions: 546,028
+    Date range: 2105-10-04 to 2214-12-15 (de-identified)
+    Most common admission type: EW EMER. (177,459)
+    Most common discharge location: HOME (194,204)
+    Most common insurance: Medicare (244,576)
+    In-hospital deaths (hospital_expire_flag=1): 11,801
+
+1B -- patients.csv (cell 06)
+  Key findings:
+    Shape: 364,627 x 6
+    Only null column: dod (326,326 -- most patients survived)
+    Age range: 18-91, mean 48.9, median 48
+    Gender: F=191,984 / M=172,643
+    Patients with recorded death date: 38,301
+
+1C -- diagnoses_icd.csv (cell 08)
+  Loaded with low_memory=False.
+  Key findings:
+    Shape: 6,364,488 x 5
+    ICD-10 codes: 3,455,747 / ICD-9 codes: 2,908,741
+    Unique patients with diagnoses: 223,291
+    Unique admissions with diagnoses: 545,497
+    Average codes per admission: 11.7
+    Top ICD code: 4019 (essential hypertension, ICD-9) with 102,368 occurrences
+
+1D -- Key Relationships (cell 10)
+  Merges admissions + patients for relationship exploration.
+  Key findings:
+    Patients with 1 admission: 123,289 (55.2%)
+    Patients with 2+ admissions: 100,163 (44.8%)
+    Distribution: heavily right-skewed, most multi-admission patients
+    have 2-3 admissions
+    30-day readmission estimate (all pairs): 30.9% of consecutive pairs
+    Patients with >= 1 gap under 30 days: 47,465 (47.4% of multi-adm pts)
+  Plots produced (inline, not saved):
+    - Bar chart: admissions per patient distribution (bins 1,2,3,4,5,6+)
+    - Histogram: patient age distribution (anchor_age)
+    - Horizontal bar: top 15 discharge locations
+    - Bar chart: insurance type distribution
+
+Note on Section 1 vs Section 2:
+  Section 1 intentionally uses no parsed dates and no transformations.
+  Section 2 reloads the same files with parse_dates for computation.
+  This separation makes the EDA observations vs the cohort-building
+  steps clearly distinct -- important for the paper's Methods section.
+
+----------------------------------------------------------------
+SECTION 2: Cohort Definition (cells 12-18)
+----------------------------------------------------------------
+
+Purpose: Build the analysis cohort from raw data using principled
+inclusion/exclusion criteria. These criteria are the Methods section
+of the paper.
+
+2A -- Load and Merge (cell 14)
+  Reloads admissions.csv with:
+    parse_dates=['admittime', 'dischtime', 'deathtime', 'edregtime', 'edouttime']
+  Reloads patients.csv (no parse_dates needed).
+  Left-merges on subject_id: df_merged.
+  Result: 546,028 rows x 21 columns
+  All 16 admissions columns + 5 patients columns (gender, anchor_age,
+  anchor_year, anchor_year_group, dod).
+
+2B -- Inclusion Criteria (cell 16)
+  Applied in this exact order. Each filter prints its own count.
+
+  FILTER 1: Adults only (anchor_age >= 18)
+    Before: 546,028 admissions, 223,452 patients
+    After:  546,028 admissions, 223,452 patients  (all pass -- MIMIC floor is 18)
+
+  FILTER 2: Exclude in-hospital deaths (hospital_expire_flag == 0)
+    After:  534,227 admissions, 218,196 patients
+    Dropped: 11,801 admissions
+    Reason: We cannot predict readmission for patients who died in hospital.
+            Including them would bias the model to predict 0 (no readmission)
+            for patients who are actually high-severity.
+
+  FILTER 3: Flag planned admissions (NOT a drop filter)
+    Created column: is_planned = 1 if admission_type is ELECTIVE or
+                    SURGICAL SAME DAY ADMISSION, else 0
+    Planned count: 55,786 admissions flagged
+    Reason: When a patient returns for a scheduled surgery or elective
+            procedure, that is NOT a readmission -- it was planned.
+            We keep the rows but use this flag in the label computation
+            to exclude planned returns from the positive class.
+
+  FILTER 4: Keep only patients with 2+ admissions
+    After:  414,353 admissions, 98,322 patients
+    Reason: A patient with only 1 admission can never have a readmission
+            label computed (there is no subsequent admission to measure).
+            Keeping them would create only label=0 rows with no next event,
+            adding noise and imbalance without clinical value.
+
+  FILTER 5: Must have at least one ICD diagnosis code
+    Loaded diagnoses_icd.csv (hadm_id column only for speed)
+    Built set of hadm_ids present in diagnoses file
+    After:  413,981 admissions, 98,312 patients
+    Dropped: 372 admissions (531 total, but ~159 were already excluded)
+    Reason: Admissions with no ICD codes have no clinical feature signal
+            for the diagnosis-based features (CCSR/CCS flags).
+
+  df_filtered = 413,981 admissions across 98,312 patients
+
+  Funnel summary table:
+    Step                   Admissions    Patients
+    ---------------------- ------------ ----------
+    Start                     546,028    223,452
+    Age >= 18                 546,028    223,452
+    No in-hosp deaths         534,227    218,196
+    2+ admissions             414,353     98,322
+    Has ICD codes             413,981     98,312
+
+2C -- Stratified Sample (cell 18)
+  Why sample at all:
+    98,312 patients is large enough to train models but makes the
+    capstone notebook heavier than needed for exploration. We sample
+    20,000 patients while preserving the demographic distribution.
+
+  Stratification variables: age_group x gender
+  Age group bins: 18-30, 31-45, 46-60, 61-75, 76+
+  Method: sklearn train_test_split with stratify=stratum, test_size=20000,
+          random_state=42 (the "test" set IS our cohort sample)
+
+  Result: df_cohort
+    Rows:            83,740 admissions
+    Unique patients: 20,000
+
+  Age group distribution (unique patients):
+    18-30:  2,480
+    31-45:  3,217
+    46-60:  4,887
+    61-75:  5,555
+    76+:    3,861
+
+  Gender distribution (admissions):
+    F: 43,477
+    M: 40,263
+
+  Plots produced (inline):
+    - Bar chart: cohort age group distribution
+    - Bar chart: cohort gender distribution
+
+  df_cohort columns: all 21 from df_merged + is_planned + age_group = 23 cols
+
+----------------------------------------------------------------
+SECTION 3: Readmission Label (cells 19-28)
+----------------------------------------------------------------
+
+Purpose: Create the binary target variable readmitted_30d.
+This is the most methodologically important section for the paper.
+
+3A -- Compute Label (cell 21)
+  Sort df_cohort by [subject_id, admittime].
+  Use groupby + shift(-1) to get each admission's NEXT admission:
+    next_admittime  = groupby(subject_id)[admittime].shift(-1)
+    next_is_planned = groupby(subject_id)[is_planned].shift(-1)
+  Compute:
+    days_to_next = (next_admittime - dischtime).dt.days
+    is_last_admission = next_admittime.isna()
+
+  Label logic (np.select, first matching condition wins):
+    Condition 1: is_last_admission == True      --> NaN  (no next admission)
+    Condition 2: days_to_next <= 0              --> NaN  (data error: next
+                 admission before/same day as discharge)
+    Condition 3: next_is_planned == 1           --> 0    (planned return,
+                 not a readmission by clinical definition)
+    Condition 4: days_to_next <= 30             --> 1    (unplanned
+                 readmission within 30 days)
+    Default:                                    --> 0    (no readmission)
+
+  Why np.select instead of apply():
+    apply() with a row function is slow on 80k+ rows.
+    np.select evaluates vectorized boolean arrays and is ~100x faster.
+    The first-matching-wins semantics handles all edge cases correctly.
+
+  Why planned returns get label=0 not NaN:
+    If we dropped planned returns entirely we would bias the dataset.
+    The admission IS a real next event -- we just classify it as
+    "did not meet the clinical definition of readmission."
+    Label=0 (not readmitted) is correct for planned returns.
+
+  Value counts before dropping:
+    0.0:  43,648
+    NaN:  22,794
+    1.0:  17,298
+
+3B -- Drop Unresolvable Rows (cell 23)
+  Rows dropped:
+    NaN readmitted_30d: 22,794 (20,000 last admissions + 2,794 data errors)
+    Negative days_to_next remaining: 0 (already captured by NaN label)
+  Total dropped: 22,794
+
+  Result: df_labeled
+    Shape: 60,946 rows x 28 columns
+    Unique patients: 19,234 (766 patients had ALL admissions dropped --
+                     their non-last admissions all had days_to_next <= 0)
+    Unique admissions: 60,946
+
+  Why 19,234 patients instead of 20,000:
+    766 patients had every non-last admission result in a data error
+    (days_to_next <= 0). After dropping, only their last admission
+    remains, which also gets dropped (no label). These patients
+    contribute nothing to the labeled dataset.
+
+3C -- Validate Label (cell 25)
+  Key statistics:
+    Total labeled admissions: 60,946
+    Positive cases (readmitted_30d=1): 17,298  (28.4%)
+    Negative cases (readmitted_30d=0): 43,648  (71.6%)
+    Class ratio (neg/pos): 2.5:1
+    Overall readmission rate: 28.4%
+
+  Note on 28.4% vs prior 19.7%:
+    The modeling_v2.ipynb pipeline (using a different cohort selection)
+    produced a 19.7% readmission rate. The capstone.ipynb pipeline
+    produces 28.4%. The difference comes from:
+      1. Different cohort: capstone uses ALL 2+ admission patients,
+         modeling_v2 used a 10k patient cohort with different filters
+      2. Different label logic: capstone excludes planned returns from
+         the positive class (which reduces label=1 count somewhat),
+         but includes a larger and more multi-admission-heavy cohort
+      3. The 30.9% raw consecutive-pair rate from Section 1 suggests
+         28.4% is the correct estimate after accounting for planned returns
+    For the paper, use 28.4% as the class-balance figure.
+
+  Readmission rate by year:
+    Stable around 27-32% across most de-identified years.
+    Low rate in early years (2105: 0.0%) reflects sparse data at edges
+    of the de-identified time range. Late years (2210+) also sparse.
+    Core study period (2110-2200) shows consistent rates.
+
+  prior_admissions_count:
+    Computed as: groupby(subject_id).cumcount()
+    Meaning: 0 for patient's first included admission, 1 for second, etc.
+    Distribution: mean=4.0, median=2, max=97
+    Rate by bucket:
+      0 prior admissions: 23.0%
+      1 prior admission:  25.0%
+      2 prior admissions: 26.6%
+      3+ prior admissions: 34.7%
+    FINDING: Rate increases monotonically with prior admission count.
+    This is clinically expected -- sicker patients come back more.
+    This validates the label construction.
+
+3D -- Validation Plots (cell 27)
+  4 inline plots (no savefig):
+    Plot 1: Class balance bar chart -- steelblue/coral
+            Shows 43,648 (71.6%) vs 17,298 (28.4%)
+            Percentage labels on top of bars
+    Plot 2: Readmission rate by year line chart
+            Confirms temporal stability of label across study period
+    Plot 3: Rate by prior admission bucket
+            Confirms monotonic increase -- no data quality flag triggered
+    Plot 4: Histogram of days_to_next for label=1 rows (0-30 day range)
+            Shows when within the window readmissions happen
+            Useful for understanding urgency of prediction
+
+3E -- Checkpoint (cell 28) -- ACTUAL BAKED-IN VALUES:
+  Total usable admissions: 60,946 rows x 31 columns
+  Readmission rate: 28.4%
+  Positive cases: 17,298
+  Negative cases: 43,648
+  Ready for EDA in Section 4
+
+  Note on column count (31 vs 28):
+    Cell 3B ends with df_labeled at 28 columns.
+    Cell 3C adds 3 more: year, prior_admissions_count, prior_bucket.
+    So by 3E time, df_labeled has 31 columns.
+
+
+================================================================================
+PART 5: DATA LINEAGE -- WHAT VARIABLE HOLDS WHAT AND WHERE
+================================================================================
+
+Section 0:
+  SEED = 42
+  PROJECT_ROOT, DATA_DIR, CCSR_DIR, OUTPUTS_DIR  (Path objects)
+  ADMISSIONS_PATH, PATIENTS_PATH, DIAGNOSES_PATH  (Path objects)
+
+Section 1 (all temporary, observation only):
+  df_admissions  -- raw admissions (strings, no date parse)
+  df_patients    -- raw patients
+  df_diagnoses   -- raw diagnoses (6.36M rows)
+
+Section 2:
+  df_admissions  -- reloaded with parse_dates (overwrites Section 1 variable)
+  df_patients    -- reloaded (same as Section 1 but from a fresh read)
+  df_merged      -- left join of admissions + patients (546,028 x 21)
+  df_filtered    -- after 5 inclusion filters (413,981 x 22 including is_planned)
+  patient_level  -- one row per patient for stratification
+  df_cohort      -- 20,000 sampled patients, all admissions (83,740 x 23)
+
+Section 3:
+  df_cohort      -- mutated in place by 3A (adds next_admittime,
+                    next_is_planned, days_to_next, is_last_admission,
+                    readmitted_30d) -- becomes 83,740 x 28
+  df_labeled     -- after dropping NaN rows (60,946 x 28)
+                    3C adds: year, prior_admissions_count, prior_bucket
+                    Final state: 60,946 x 31
+
+Columns in df_labeled (31 total):
+  From admissions: subject_id, hadm_id, admittime, dischtime, deathtime,
+                   admission_type, admit_provider_id, admission_location,
+                   discharge_location, insurance, language, marital_status,
+                   race, edregtime, edouttime, hospital_expire_flag
+  From patients:   gender, anchor_age, anchor_year, anchor_year_group, dod
+  Built in 2B:     is_planned
+  Built in 2C:     age_group
+  Built in 3A:     next_admittime, next_is_planned, days_to_next,
+                   is_last_admission, readmitted_30d
+  Built in 3C:     year, prior_admissions_count, prior_bucket
+
+TARGET COLUMN: readmitted_30d (float64, values 0.0 and 1.0)
+  Note: dtype is float because np.select with NaN choices produces float.
+        Cast to int before modeling: df_labeled['readmitted_30d'].astype(int)
+
+
+================================================================================
+PART 6: WHAT COMES NEXT (PLANNED SECTIONS 4-7)
+================================================================================
+
+SECTION 4: Exploratory Data Analysis
+  On df_labeled (not raw data).
+  Demographics vs readmission rate:
+    - Race group vs readmission rate (bar chart)
+    - Gender vs readmission rate
+    - Age group vs readmission rate
+    - Insurance type vs readmission rate
+  Clinical features vs readmission rate:
+    - LOS distribution by label
+    - came_via_ed vs readmission rate
+    - prior_admissions_count vs readmission rate (already done in 3C)
+    - discharge_location vs readmission rate
+  Diagnosis patterns:
+    - Top CCSR/CCS codes by label (requires joining with diagnoses_icd)
+    - Note: CCSR features are in final_dataset.parquet, not in df_labeled yet
+  Correlation heatmap of numeric features
+  Output: No saves to disk. All plots inline.
+
+SECTION 5: Feature Engineering
+  Load final_dataset.parquet (23,896 x 719) for CCSR/CCS binary features.
+  Alternatively, build CCSR features fresh from df_labeled and diagnoses_icd.
+  Decision needed: reconcile df_labeled cohort (60,946 admissions, 20,000 pts)
+  with final_dataset.parquet cohort (9,996 pts, different pipeline).
+  Options:
+    A) Rebuild CCSR features for the new 20,000-patient cohort (cleaner)
+    B) Use final_dataset.parquet as-is with the old cohort (faster)
+  Recommendation: Option A -- build from scratch for the capstone so
+                  the cohort is internally consistent.
+  Features to engineer:
+    - CCSR binary flags (ICD-10 via DXCCSR_v2025-1)
+    - CCS binary flags (ICD-9 via Single_Level_CCS_2015)
+    - Fix column name trailing spaces (issue documented in diagnostics.txt)
+    - Demographics (already in df_labeled)
+    - LOS, came_via_ed, prior_admissions_count (already in df_labeled)
+    - Age group (already in df_labeled)
+
+SECTION 6: Preprocessing and Train/Test Split
+  Fix CCSR column name trailing spaces
+  Consolidate race to 6 categories
+  Fill missing values
+  One-hot encode categorical features
+  Scale numeric features (StandardScaler)
+  Split by subject_id (NOT by row -- already established as correct)
+  Save X_train, X_test, y_train, y_test
+
+SECTION 7: Modeling
+  Logistic Regression (baseline)
+  Random Forest
+  XGBoost (expected best based on modeling_v2.ipynb results: AUC 0.7513)
+  Evaluate: AUC-ROC, precision, recall, F1, confusion matrix
+  Calibration curves
+  SHAP feature importance
+  Fairness audit by race, gender, age group, insurance
+
+
+================================================================================
+PART 7: KEY DESIGN DECISIONS FOR THE PAPER
+================================================================================
+
+Decision 1: Why 30-day readmission (not 7-day or 90-day)?
+  - 30 days is the CMS (Centers for Medicare and Medicaid Services)
+    standard for the HRRP penalty program
+  - Most clinical literature uses 30 days as the benchmark
+  - Short enough to reflect acute care quality, long enough to capture
+    delayed complications
+
+Decision 2: Why exclude in-hospital deaths?
+  - Patients who died cannot be readmitted
+  - Including them would create systematic label=0 rows for the
+    highest-severity patients, biasing the model incorrectly
+  - Standard practice in readmission prediction literature
+
+Decision 3: Why flag planned admissions as label=0 instead of dropping them?
+  - Dropping planned admissions would remove real data points
+  - A patient scheduled for an elective surgery DID return to hospital --
+    but it was not a readmission in the clinical sense
+  - Label=0 (no readmission) correctly reflects this: the patient was
+    discharged and did not experience an unplanned readmission
+  - This is the methodologically correct approach per readmission literature
+
+Decision 4: Why require 2+ admissions?
+  - A patient's first-ever admission has no previous admission history,
+    and their last admission has no known subsequent admission
+  - Patients with only 1 admission provide only label=NaN rows
+    (last admission has no label) -- they contribute nothing
+  - Requiring 2+ ensures every patient contributes at least one
+    labeled row (their non-last admissions)
+
+Decision 5: Why split by subject_id not by row?
+  - One patient can appear in both train and test if split by row
+  - The model would then "remember" patient characteristics from
+    their training admissions when predicting their test admissions
+  - This is data leakage and inflates evaluation metrics
+  - Patient-level split is the correct approach for longitudinal EHR data
+
+Decision 6: Why stratified sampling?
+  - Simple random sampling of 20,000 from 98,312 could accidentally
+    undersample rare age-gender combinations (e.g., very young or
+    very old patients)
+  - Stratified sampling preserves the demographic distribution of the
+    full eligible cohort in the sample
+  - This makes the sample representative and the results generalizable
+
+Decision 7: Why use CCSR/CCS instead of raw ICD codes?
+  - ICD-10 has 70,000+ codes, ICD-9 has 14,000+ codes
+  - Using raw codes as features would create a massive sparse matrix
+    with extreme dimensionality
+  - CCSR groups ICD-10 codes into ~530 clinically meaningful categories
+  - CCS groups ICD-9 codes into ~260 categories
+  - This reduces dimensionality while preserving clinical signal
+  - Each CCSR/CCS flag is a binary: 1 = patient had any diagnosis in
+    that category during this admission
+
+
+================================================================================
+PART 8: NUMBERS TO CITE IN THE PAPER (VERIFIED FROM CODE)
+================================================================================
+
+Dataset scale:
+  - Total MIMIC-IV patients:       364,627
+  - Total MIMIC-IV admissions:     546,028
+  - Total diagnosis code records:  6,364,488
+  - ICD-10 diagnoses:              3,455,747 (54.3%)
+  - ICD-9 diagnoses:               2,908,741 (45.7%)
+
+Cohort construction:
+  - Eligible patients (2+ admissions, survived, has ICD codes): 98,312
+  - Study cohort: 20,000 patients (stratified sample)
+  - Study admissions: 83,740 total, 60,946 labeled
+
+Label statistics:
+  - Readmission rate (study cohort): 28.4%
+  - Positive cases: 17,298
+  - Negative cases: 43,648
+  - Class ratio: 2.5:1 (negative to positive)
+
+Prior admission effect on readmission rate:
+  - 0 prior admissions: 23.0% readmitted
+  - 1 prior admission:  25.0% readmitted
+  - 2 prior admissions: 26.6% readmitted
+  - 3+ prior admissions: 34.7% readmitted
+
+Existing model performance (from modeling_v2.ipynb, DIFFERENT cohort):
+  - Best model: XGBoost, ROC-AUC = 0.7513
+  - Note: These numbers are from the old 9,996-patient pipeline.
+          New capstone.ipynb numbers will be generated in Section 7.
+
+
+================================================================================
+PART 9: TECHNICAL NOTES FOR CLAUDE
+================================================================================
+
+1. All Jupyter operations use the ANACONDA kernel:
+   C:/Users/dhara/anaconda3/python.exe
+   NOT the system Python3.13
+
+2. capstone.ipynb uses plt.show() everywhere -- NOT plt.savefig().
+   No data is written to disk in Sections 0-3.
+   The notebook is designed for interactive exploration.
+
+3. The notebook uses pathlib.Path for all file references.
+   Always use ADMISSIONS_PATH, PATIENTS_PATH, DIAGNOSES_PATH
+   (defined in Section 0) rather than hardcoded string paths in later cells.
+
+4. SEED = 42 is defined in Section 0. Pass random_state=SEED
+   to any function that requires reproducibility.
+
+5. df_labeled is the starting point for Sections 4 onward.
+   It has readmitted_30d as float64 (0.0 and 1.0).
+   Cast to int before passing to sklearn: .astype(int)
+
+6. NotebookEdit tool limitations:
+   - Requires full new_source (no old_string/new_string)
+   - Does not reliably update open notebooks in VS Code
+   - Preferred approach: use a generator Python script (gen_*.py),
+     run it, delete the generator
+   - Always read the notebook JSON first to verify current state
+
+7. No em-dashes in any code, comments, or markdown.
+   Use -- (double hyphen) or plain dashes only.
+
+8. Generator script pattern (established and tested):
+   - Write gen_*.py using Write tool
+   - Run via Bash: C:/Users/dhara/anaconda3/python.exe gen_*.py
+   - Verify via Bash: C:/Users/dhara/anaconda3/python.exe -c "import json..."
+   - Extract code cells and run as _test_*.py for end-to-end verification
+   - Delete gen_*.py and _test_*.py via PowerShell Remove-Item
+   - For append-only (like capstone.ipynb), read existing notebook first
+     and check ORIGINAL_CELL_COUNT before appending to avoid duplicates
+
+9. CCSR column name bug (affects X_train/X_test/final_dataset_clean):
+   183 CCS columns have trailing spaces (e.g., '10   ' not '10').
+   Root cause: strip().replace() order in preprocessing.ipynb.
+   Fix: replace("'","").strip() not strip().replace("'","")
+   This has no effect on model accuracy (sklearn ignores col names)
+   but will affect SHAP dashboard labels.
+
+10. ROC-AUC discrepancy: Readme.txt says 0.7562, json says 0.7513.
+    Use 0.7513 (machine-generated, from best_model_info.json).
+
+
+================================================================================
+PART 10: FILES RELATED TO CAPSTONE.IPYNB
+================================================================================
+
+Primary notebook:
+  capstone.ipynb                    -- THE main notebook, 29 cells so far
+
+Source data (read-only):
+  data/admissions.csv               -- 546,028 x 16
+  data/patients.csv                 -- 364,627 x 6
+  data/diagnoses_icd.csv            -- 6,364,488 x 5
+
+Context files:
+  Readme.txt                        -- overall project context (older)
+  capstone_context.txt              -- THIS FILE (capstone-specific, current)
+  diagnostics.txt                   -- full project diagnostic report
+
+Supporting outputs (used by earlier notebooks, may be reused):
+  outputs/final_dataset.parquet     -- 23,896 x 719 (old 9,996-pt pipeline)
+  outputs/final_dataset_clean.parquet -- 23,881 x 455 (cleaned version)
+  outputs/X_train.parquet / X_test.parquet / y_train.csv / y_test.csv
+  outputs/xgb_model.pkl             -- best model from old pipeline
+  outputs/best_model_info.json      -- ROC-AUC 0.7513, run_date 2026-05-12
+  outputs/fairness_audit.csv        -- from old pipeline
+  outputs/roc_curves.png / calibration_curves.png
+
+Earlier-pipeline notebooks (complete but separate from capstone.ipynb):
+  cohort.ipynb                      -- old Phase 1 cohort
+  ccsr_features.ipynb               -- old Phase 2 CCSR features
+  eda_final_dataset.ipynb           -- old Phase 3 EDA
+  preprocessing.ipynb               -- old preprocessing
+  modeling.ipynb                    -- old modeling (incomplete)
+  notebooks/modeling_v2.ipynb       -- old modeling (complete, AUC 0.7513)
+
+capstone.ipynb is the CLEAN RESTART of the full pipeline in a single
+notebook. It supersedes the fragmented older notebooks for paper purposes.
+
+
+================================================================================
+PART 11: EXPLANATION SCRIPTS (FOR PROFESSOR/RECRUITER)
+================================================================================
+
+When explaining this project, use this narrative:
+
+"I built a 30-day hospital readmission prediction system using MIMIC-IV,
+a real de-identified clinical database from Beth Israel Deaconess Medical
+Center. The dataset has 546,000 hospital admissions from 364,000 unique
+patients, including diagnosis codes, demographics, and admission details.
+
+My pipeline has seven stages:
+  1. Raw data exploration -- understanding what the data looks like
+  2. Cohort definition -- applying clinical inclusion criteria
+  3. Label construction -- computing who was readmitted within 30 days
+     using a clinically correct definition (excluding planned returns)
+  4. EDA on the labeled dataset -- finding patterns by demographic group
+  5. Feature engineering -- converting ICD codes to CCSR clinical categories
+  6. Preprocessing and modeling -- training Logistic Regression, Random Forest,
+     and XGBoost with patient-level train/test split to prevent data leakage
+  7. Fairness audit -- checking whether the model performs equally across
+     race, gender, and insurance groups
+
+The most interesting methodological choice is how I define a readmission.
+A patient returning for a scheduled surgery is NOT a readmission -- it was
+planned. Only unplanned returns within 30 days count. This distinction is
+clinically meaningful and affects about 56,000 admissions in the dataset.
+
+The best model (XGBoost) achieves a ROC-AUC of 0.75, meaning it can
+distinguish between patients who will and will not be readmitted 75% of
+the time, significantly better than random chance (0.5)."
+
+================================================================================
+END OF CAPSTONE CONTEXT FILE
+================================================================================

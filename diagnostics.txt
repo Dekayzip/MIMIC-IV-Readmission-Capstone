@@ -1,0 +1,302 @@
+================================================================================
+PROJECT DIAGNOSTIC REPORT
+Generated: 2026-05-23
+Project: MIMIC-IV 30-Day Hospital Readmission Prediction
+Path: C:\Users\dhara\OneDrive\Desktop\Project 1\
+================================================================================
+
+
+================================================================================
+SECTION 1: MIMIC-IV SOURCE FILES
+================================================================================
+
+data/admissions.csv
+  Shape: 546,028 rows x 16 columns
+  Columns: subject_id, hadm_id, admittime, dischtime, deathtime,
+           admission_type, admit_provider_id, admission_location,
+           discharge_location, insurance, language, marital_status,
+           race, edregtime, edouttime, hospital_expire_flag
+
+data/patients.csv
+  Shape: 364,627 rows x 6 columns
+  Columns: subject_id, gender, anchor_age, anchor_year,
+           anchor_year_group, dod
+
+data/diagnoses_icd.csv
+  Shape: 6,364,488 rows x 5 columns
+  Columns: subject_id, hadm_id, seq_num, icd_code, icd_version
+
+
+================================================================================
+SECTION 2: CURRENT COHORT
+================================================================================
+
+Source:              outputs/cohort_10k.csv
+Shape:               9,996 rows x 3 columns
+Columns:             subject_id, age_group, gender
+Unique subject_ids:  9,996
+Age range:           18 - 106 (mean 59.0 years at admission)
+Admissions:          23,896 rows in final_dataset.parquet
+                     (multiple admissions per patient)
+Readmission rate:    19.75%  (4,719 positive / 19,177 negative)
+
+
+================================================================================
+SECTION 3: PIPELINE STRUCTURE (CORRECTED)
+================================================================================
+
+Step 1  cohort.ipynb
+        Output:  outputs/cohort_10k.csv
+        Shape:   9,996 x 3
+        Status:  COMPLETE
+
+Step 2  ccsr_features.ipynb
+        Output:  outputs/ccsr_features.parquet  (intermediate)
+        Shape:   9,996 x 708
+        Status:  COMPLETE
+
+Step 3  ccsr_features.ipynb
+        Output:  outputs/final_dataset.parquet
+        Shape:   23,896 x 719
+        Status:  COMPLETE
+        Note:    Readme.txt incorrectly listed modeling.ipynb as
+                 the source of final_dataset.parquet. It was
+                 ccsr_features.ipynb throughout.
+
+Step 4  preprocessing.ipynb
+        Output:  outputs/final_dataset_clean.parquet
+        Shape:   23,881 x 455
+        Status:  COMPLETE*
+        Note:    See Data Issues -- the actual clean dataset structure
+                 differs from what preprocessing.ipynb produces. The
+                 clean dataset was built inline inside modeling_v2.ipynb.
+
+Step 5  modeling_v2.ipynb
+        Output:  outputs/lr_model.pkl, rf_model.pkl, xgb_model.pkl,
+                 roc_curves.png, calibration_curves.png,
+                 fairness_audit.csv, best_model_info.json
+        Train:   19,110 rows x 452 features
+        Test:    4,771 rows x 452 features
+        Status:  COMPLETE
+
+
+================================================================================
+SECTION 4: OUTPUT FILES
+================================================================================
+
+outputs/X_train.parquet             697,517 bytes    [PRESENT]
+outputs/X_test.parquet              384,059 bytes    [PRESENT]
+outputs/y_train.csv                  57,346 bytes    [PRESENT]
+outputs/y_test.csv                   14,329 bytes    [PRESENT]
+outputs/final_dataset.parquet     1,272,751 bytes    [PRESENT]
+outputs/final_dataset.csv        35,717,732 bytes    [PRESENT]
+outputs/final_dataset_clean.parquet 1,061,745 bytes  [PRESENT]
+outputs/ccsr_features.parquet       891,441 bytes    [PRESENT]
+outputs/ccsr_features_preview.csv    48,624 bytes    [PRESENT]
+outputs/cohort_10k.csv              206,186 bytes    [PRESENT]
+outputs/lr_model.pkl                 11,903 bytes    [PRESENT]
+outputs/rf_model.pkl             80,830,105 bytes    [PRESENT]
+outputs/xgb_model.pkl               724,057 bytes    [PRESENT]
+outputs/scaler.pkl                    1,095 bytes    [PRESENT]
+outputs/best_model_info.json            170 bytes    [PRESENT]
+outputs/roc_curves.png              101,913 bytes    [PRESENT]
+outputs/calibration_curves.png      106,919 bytes    [PRESENT]
+outputs/fairness_audit.csv              500 bytes    [PRESENT]
+outputs/age_gender_distribution.png  40,148 bytes    [PRESENT]
+
+Total files: 19
+
+
+================================================================================
+SECTION 5: COLUMN INVENTORY -- final_dataset_clean.parquet (455 cols)
+================================================================================
+
+--- ID / Target (3 cols) ---
+
+subject_id                int64   patients.csv
+                          Unique patient identifier
+
+hadm_id                   int64   admissions.csv
+                          Unique hospital admission identifier
+
+readmitted_30d            int32   computed
+                          Target variable: 1 if patient was readmitted
+                          within 30 days of discharge, 0 otherwise
+
+--- Numeric Features (4 cols) ---
+
+age_at_admission          int64   patients.csv + admissions.csv
+                          Patient age at time of admission (range 18-106)
+
+los_days                  int64   admissions.csv
+                          Length of hospital stay in days
+
+came_via_ed               int32   admissions.csv (edregtime not null)
+                          1 if patient arrived through emergency dept
+
+prior_admissions_count    int64   admissions.csv (windowed count)
+                          Number of prior admissions before this one
+
+--- One-Hot Encoded Categorical Features (38 cols) ---
+
+gender (2 cols)
+  gender_F, gender_M
+
+race (6 cols -- consolidated from 33 original MIMIC values)
+  race_ASIAN, race_BLACK, race_HISPANIC,
+  race_OTHER, race_UNKNOWN, race_WHITE
+
+admission_type (9 cols)
+  admission_type_AMBULATORY OBSERVATION
+  admission_type_DIRECT EMER.
+  admission_type_DIRECT OBSERVATION
+  admission_type_ELECTIVE
+  admission_type_EU OBSERVATION
+  admission_type_EW EMER.
+  admission_type_OBSERVATION ADMIT
+  admission_type_SURGICAL SAME DAY ADMISSION
+  admission_type_URGENT
+
+insurance (6 cols)
+  insurance_missing  (NaN at source)
+  insurance_Medicaid
+  insurance_Medicare
+  insurance_No charge
+  insurance_Other
+  insurance_Private
+
+discharge_location (13 cols)
+  discharge_location_missing         (6,577 NaN rows at source)
+  discharge_location_ACUTE HOSPITAL
+  discharge_location_AGAINST ADVICE
+  discharge_location_ASSISTED LIVING
+  discharge_location_CHRONIC/LONG TERM ACUTE CARE
+  discharge_location_HEALTHCARE FACILITY
+  discharge_location_HOME
+  discharge_location_HOME HEALTH CARE
+  discharge_location_HOSPICE
+  discharge_location_OTHER FACILITY
+  discharge_location_PSYCH FACILITY
+  discharge_location_REHAB
+  discharge_location_SKILLED NURSING FACILITY
+  Note: DIED rows (15) were dropped before encoding
+
+marital_status (5 cols)
+  marital_status_missing  (NaN at source)
+  marital_status_DIVORCED
+  marital_status_MARRIED
+  marital_status_SINGLE
+  marital_status_WIDOWED
+
+--- CCSR Binary Features -- ICD-10 (216 cols) ---
+
+Source:  AHRQ DXCCSR_v2025-1 mapping
+Names:   Alphanumeric codes e.g. SYM015, CIR007, END003
+Meaning: 1 if patient had any ICD-10 diagnosis in that CCSR
+         category during the admission, 0 otherwise
+
+--- CCS Binary Features -- ICD-9 (191 cols) ---
+
+Source:  AHRQ CCS Single Level 2015 mapping
+Names:   Numeric codes 1 through 259 (with trailing spaces --
+         see Issue 1 in Data Issues section)
+Meaning: 1 if patient had any ICD-9 diagnosis mapping to that
+         CCS code during the admission, 0 otherwise
+Note:    298 low-prevalence CCSR/CCS columns from the original
+         705 were dropped before modeling
+
+
+================================================================================
+SECTION 6: MODELING RESULTS
+================================================================================
+
+Models trained:   Logistic Regression, Random Forest, XGBoost
+Best model:       XGBoost
+ROC-AUC:          0.7513  (source: best_model_info.json)
+Train shape:      19,110 x 452 features
+Test shape:       4,771 x 452 features
+Run date:         2026-05-12
+
+Charts:
+  outputs/roc_curves.png          -- ROC curves for all three models
+  outputs/calibration_curves.png  -- calibration curves for all three models
+  outputs/fairness_audit.csv      -- readmission rate by demographic group
+
+
+================================================================================
+SECTION 7: DATA ISSUES DETECTED
+================================================================================
+
+ISSUE 1 -- CCSR/CCS column trailing spaces  [ACTIVE]
+  Affects: X_train.parquet, X_test.parquet, final_dataset_clean.parquet
+  Count:   183 columns have trailing spaces in their names
+  Example: "10   " instead of "10", "100  " instead of "100"
+  Cause:   preprocessing.ipynb strips in wrong order:
+             df.columns.str.strip().str.replace("'", '')
+           The quotes are the outermost characters so str.strip()
+           removes nothing. After quote removal, spaces are exposed
+           but no second strip is called.
+  Fix:     Swap order to:
+             df.columns.str.replace("'", '').str.strip()
+  Impact:  No effect on model accuracy (sklearn ignores col names).
+           Will cause ugly labels in SHAP feature importance plots.
+
+ISSUE 2 -- preprocessing.ipynb output does not match actual clean dataset  [ACTIVE]
+  preprocessing.ipynb (built this session) produces 753 columns.
+  Actual final_dataset_clean.parquet has 455 columns.
+  The clean dataset was produced inline inside modeling_v2.ipynb,
+  not by running preprocessing.ipynb. The two pipelines are out of sync.
+  Differences:
+    - preprocessing.ipynb fills NaN with UNKNOWN string
+    - Actual clean dataset uses _missing suffix columns
+    - preprocessing.ipynb keeps all 705 CCSR columns
+    - Actual clean dataset drops 298 low-prevalence columns
+  Impact:  preprocessing.ipynb output is never used by any downstream
+           notebook. It is documentation of intent, not actual source.
+
+ISSUE 3 -- ROC-AUC discrepancy in Readme.txt  [ACTIVE]
+  Readme.txt Section 9 states:  ROC-AUC: 0.7562
+  best_model_info.json states:  "roc_auc": 0.7513
+  The json was written by the modeling script and is the authoritative
+  machine-generated value. The Readme figure was entered manually.
+  Fix: Update Readme.txt Section 9 to 0.7513.
+
+ISSUE 4 -- Pipeline step 3 label in Readme.txt  [FIXED IN THIS REPORT]
+  Readme.txt originally listed modeling.ipynb as the producer of
+  final_dataset.parquet. It was ccsr_features.ipynb throughout.
+  Corrected in Section 3 of this report.
+
+ISSUE 5 -- CCS ICD-9 column names are numeric-only  [LOW PRIORITY]
+  191 feature columns have names that are bare numbers (1, 10, 100, etc.)
+  These are CCS single-level classification codes with no label attached.
+  CCSR ICD-10 names (SYM015, CIR007) are at least code-parseable.
+  Impact: SHAP dashboard will display numbers with no clinical context.
+  Fix:    Join CCS code descriptions from the CCS reference file at
+          ccsr/icd9_ccs/ to produce human-readable feature labels.
+
+
+================================================================================
+SECTION 8: ITEMS NEEDING RESOLUTION BEFORE DASHBOARD
+================================================================================
+
+Priority 1 -- Fix ROC-AUC in Readme.txt from 0.7562 to 0.7513
+
+Priority 2 -- Fix column name trailing spaces (183 cols in X_train/X_test)
+  Change preprocessing.ipynb Section 4 line to:
+    df.columns = df.columns.str.replace("'", '', regex=False).str.strip()
+  Then regenerate X_train.parquet and X_test.parquet
+
+Priority 3 -- Decide preprocessing.ipynb role
+  Option A: Update preprocessing.ipynb to match what modeling_v2.ipynb
+            actually used (same column dropping logic, same NaN strategy)
+  Option B: Keep preprocessing.ipynb as a standalone clean version and
+            document that modeling_v2.ipynb does its own preprocessing
+
+Priority 4 -- Add CCS code labels for SHAP display
+  Load ccsr/icd9_ccs/ reference, build a dict mapping numeric code to
+  description, use it when rendering SHAP feature importance plots
+
+
+================================================================================
+END OF DIAGNOSTIC REPORT
+================================================================================
