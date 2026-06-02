@@ -764,3 +764,44 @@ the time, significantly better than random chance (0.5)."
 ================================================================================
 END OF CAPSTONE CONTEXT FILE
 ================================================================================
+
+================================================================================
+CLEANUP PASS - 2026-06-01
+================================================================================
+
+- Race consolidation in Section 6C was updated to string-based grouping.
+- Section 6E near-zero variance wording now says 0.5% when threshold uses 0.005.
+- Section 6F confirms df_preprocessed is assigned from df_encoded.
+- Section 7 and Section 8 avoid hard-coded feature-count assertions.
+- Section 7 still uses patient-level splitting with a zero-overlap assertion.
+- Model hyperparameters were not changed during this cleanup pass.
+
+================================================================================
+SECTION 4F CHI-SQUARE UPDATE - 2026-06-01
+================================================================================
+
+- Added Chi-square and Cramer's V audit for categorical and binary EDA features.
+- The audit uses df_labeled only and works from a local chi_df copy.
+- It does not modify df_labeled or downstream modeling datasets.
+- Purpose is feature understanding, not automatic feature selection.
+- Any future chi-square based feature selection should be done on training data only.
+
+================================================================================
+SECTIONS 8J TO 8N UPDATE - 2026-06-01
+================================================================================
+
+- Added 8J expanded classification reports for train and test.
+- Added 8K train vs test comparison for overfitting.
+- Added 8L oversampling and undersampling experiments on top 3 non-ensemble models.
+- Added 8M lightweight hyperparameter tuning on promising models.
+- Added 8N final model selection for fairness and SHAP.
+- Final selected model: XGBoost.
+- Final selected model source: Tuned.
+- Final model ROC-AUC: 0.6608.
+- Final model AUPRC: 0.4204.
+- Final model recall: 0.5933.
+- Final model precision: 0.3803.
+- Final model F1: 0.4635.
+- Final model false negatives: 1,400.
+- Final model false positives: 3,327.
+- The test set is never resampled, and SMOTE is not used.
